@@ -1,0 +1,105 @@
+services:
+  kafka-0:
+    container_name: kafka-0
+    hostname: kafka-host
+    image: bitnami/kafka:latest
+    user: "0:0"
+    working_dir: /opt/bitnami/kafka/bin
+    healthcheck:
+      test: ["CMD", "./kafka-topics.sh", "--bootstrap-server=localhost:29092", "--list"]
+      start_period: 15s
+      interval: 10s
+      retries: 2
+    ports:
+      - "29092:29092"
+    restart: always 
+    environment:
+      - KAFKA_CFG_NODE_ID=0
+      - KAFKA_KRAFT_CLUSTER_ID=abcdefghijklmnopqrstuv
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka-host:9093
+      - KAFKA_CFG_LISTENERS=INTERNAL://:9091,EXTERNAL://:29092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=INTERNAL://kafka-host:9091,EXTERNAL://kafka-host:29092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_CFG_SASL_MECHANISM_CONTROLLER_PROTOCOL=PLAIN
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=INTERNAL
+      - KAFKA_CFG_SASL_MECHANISM_INTER_BROKER_PROTOCOL=PLAIN
+      - KAFKA_CLIENT_LISTENER_NAME=EXTERNAL
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=false
+    volumes:
+      - ./volumes/kafka:/bitnami/kafka
+    networks:
+      - bewise-testing-network
+
+
+  kafka-init-topics:
+    container_name: kafka-init-topics
+    image: bitnami/kafka:latest
+    working_dir: /opt/bitnami/kafka/bin
+    entrypoint: ["/bin/bash", "-c"]
+    depends_on:
+      kafka-0:
+        condition: service_healthy
+    volumes:
+      - ./scripts/kafka-init.sh:/opt/bitnami/kafka/bin/kafka-init.sh
+    command: |
+      ./kafka-init.sh
+    networks:
+      - bewise-testing-network
+     
+      
+  kafka-ui:
+    container_name: kafka-ui
+    image: provectuslabs/kafka-ui:latest
+    ports:
+      - 8080:8080
+    depends_on:
+      - kafka-0
+    environment:
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-host:9091
+    networks:
+      - bewise-testing-network
+
+
+  bewise-db:
+    container_name: bewise-db
+    hostname: db-host
+    image: postgres:16-alpine
+    restart: always
+    env_file: .env
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      start_period: 20s
+      interval: 10s
+      retries: 2
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./volumes/postgres:/var/lib/postgresql/data/
+    networks:
+      - bewise-testing-network
+   
+          
+  bewise-app:
+    container_name: bewise-app
+    env_file: .env
+    build:
+      dockerfile: Dockerfile
+    command: ./scripts/unicorn.sh
+    depends_on:
+      bewise-db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./logs:/bewisetesting/logs
+    networks:
+      - bewise-testing-network
+
+
+networks:
+  bewise-testing-network:
+    name: bewise-testing-network
+    driver: bridge
+
